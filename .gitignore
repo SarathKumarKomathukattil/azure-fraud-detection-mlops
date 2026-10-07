@@ -1,0 +1,11 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+
+data/
+*.csv
+*.parquet
+
+mlruns/
+.DS_Store
