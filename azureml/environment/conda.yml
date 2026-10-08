@@ -1,0 +1,19 @@
+name: fraud-training-env
+
+channels:
+  - conda-forge
+
+dependencies:
+  - python=3.12
+  - pip
+  - pip:
+      - mlflow
+      - pandas
+      - azureml-mlflow
+      - scikit-learn
+      - pyarrow
+
+
+
+
+      
