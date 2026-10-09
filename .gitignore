@@ -9,3 +9,4 @@ data/
 
 mlruns/
 .DS_Store
+.azureml/config.json
