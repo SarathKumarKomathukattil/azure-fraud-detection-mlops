@@ -1,6 +1,5 @@
-from azure.ai.ml import MLClient
+from azure.ai.ml import MLClient,Input,command
 from azure.identity import DefaultAzureCredential
-from azure.ai.ml import Input,command
 from azure.ai.ml.constants import AssetTypes,InputOutputModes
 from azure.ai.ml.entities import ManagedIdentityConfiguration
 

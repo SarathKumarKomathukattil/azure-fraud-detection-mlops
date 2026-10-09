@@ -9,7 +9,7 @@ ml_client = MLClient.from_config(credential=credential, path="../../.azureml/con
 
 training_env = Environment(
     name="fraud-training-env",
-    version='2',
+    version='3',
     description="Training environment for PaySim fraud models",
     image="mcr.microsoft.com/azureml/openmpi4.1.0-ubuntu22.04:latest",
     conda_file="./conda.yml",

@@ -12,6 +12,7 @@ dependencies:
       - azureml-mlflow
       - scikit-learn
       - pyarrow
+      - xgboost
 
 
 

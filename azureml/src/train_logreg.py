@@ -121,3 +121,5 @@ print("TP:", tp)
 print("FP:", fp)
 print("TN:", tn)
 print("FN:", fn)
+
+mlflow.end_run()
