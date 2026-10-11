@@ -1,0 +1,18 @@
+{
+  "input_data": [
+    {
+      "amount": 5000,
+      "log_amount": 8.517,
+      "type_cash_in": 0,
+      "type_cash_out": 0,
+      "type_debit": 0,
+      "type_payment": 0,
+      "type_transfer": 1,
+      "origin_txn_count_prior": 3,
+      "origin_avg_amount_prior": 1000,
+      "origin_total_amount_prior": 3000,
+      "amount_vs_origin_avg": 5.0,
+      "origin_has_history": 1
+    }
+  ]
+}

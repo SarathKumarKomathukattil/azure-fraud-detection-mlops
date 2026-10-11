@@ -1,0 +1,14 @@
+nmae: fraud-inference-env
+
+channels:
+  - conda-forge
+
+dependencies:
+  - python=3.12
+  - pip
+  - pip:
+     - mlflow==2.16.2
+     - xgboost==3.4.1
+     - pandas
+     - azureml-inference-server-http
+     - azureml-ai-monitoring

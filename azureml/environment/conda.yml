@@ -7,7 +7,7 @@ dependencies:
   - python=3.12
   - pip
   - pip:
-      - mlflow
+      - mlflow==2.16.2
       - pandas
       - azureml-mlflow
       - scikit-learn
