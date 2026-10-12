@@ -51,17 +51,6 @@ y_train = train_df["is_fraud"]
 X_validation = validation_df[feature_columns]
 y_validation = validation_df["is_fraud"]
 
-
-negative_count = (y_train == 0).sum()
-positive_count = (y_train == 1).sum()
-
-natural_imbalance_ratio = negative_count / positive_count
-
-print("Natural imbalance ratio:", natural_imbalance_ratio)
-
-print("Model scale_pos_weight: 300.0")
-
-
 model = XGBClassifier(
     objective="binary:logistic",
     n_estimators=1000,
