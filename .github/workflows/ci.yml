@@ -30,7 +30,7 @@ jobs:
         run: python -m compileall azureml databricks tests
 
       - name: Run unit tests
-        run: pytest tests -v
+        run: python -m pytest tests -v
     
 
     
