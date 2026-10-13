@@ -54,7 +54,7 @@ def fraud_model_release_pipeline(data):
 
 training_data = Input(
     type=AssetTypes.URI_FOLDER,
-    path="azureml:paysim-fraud-training-snapshot:1",
+    path="azureml:paysim-fraud-training-snapshot:2",
     mode=InputOutputModes.RO_MOUNT
 )
 
@@ -95,9 +95,9 @@ model_to_register = Model(
         "task": "binary_classification",
         "model_family": "xgboost",
         "quality_gate": "passed",
-        "data_version": "paysim-fraud-training-snapshot:1",
+        "data_version": "paysim-fraud-training-snapshot:2",
         "threshold_policy": "recall_70_max_precision",
-        "release_status": "approved"
+        "release_status": "challenger"
     }
 )
 

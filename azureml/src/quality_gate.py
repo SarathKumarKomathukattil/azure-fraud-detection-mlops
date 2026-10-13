@@ -20,8 +20,7 @@ test_recall = metrics["test_recall"]
 test_pr_auc = metrics["test_pr_auc"]
 test_roc_auc = metrics["test_roc_auc"]
 
-final_operating_threshold = 0.43953168
-
+final_operating_threshold = metrics["final_operating_threshold"]
 validation_pr_auc = 0.26736296521775227
 validation_roc_auc = 0.9212790418374809
 
