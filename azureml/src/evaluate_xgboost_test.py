@@ -1,6 +1,7 @@
 import os
 import json
 import mlflow
+import numpy as np
 import mlflow.xgboost
 import pandas as pd
 from argparse import ArgumentParser
@@ -45,13 +46,19 @@ columns_to_read = feature_columns + ['is_fraud','dataset_split']
 df = pd.read_parquet(path=args.data,
                      columns=columns_to_read)
 
-train_df = df[df['dataset_split']=='train'].copy()
-test_df = df[df['dataset_split']=='test'].copy()
-print("Train rows:", len(train_df))
-print("Test rows :", len(test_df))
+train_df = df[df["dataset_split"] == "train"].copy()
+validation_df = df[df["dataset_split"] == "validation"].copy()
+test_df = df[df["dataset_split"] == "test"].copy()
+
+print("Train rows      :", len(train_df))
+print("Validation rows :", len(validation_df))
+print("Test rows       :", len(test_df))
 
 X_train = train_df[feature_columns]
 y_train = train_df["is_fraud"]
+
+X_validation = validation_df[feature_columns]
+y_validation = validation_df["is_fraud"]
 
 X_test = test_df[feature_columns]
 y_test = test_df['is_fraud']
@@ -71,9 +78,23 @@ model = XGBClassifier(
     n_jobs=-1
 )
 
-final_threshold = 0.43953168
-
 model.fit(X_train,y_train)
+
+validation_probability = model.predict_proba(X_validation)[:,1]
+precision_values,recall_values,thresholds = precision_recall_curve(y_validation,
+                                                                   validation_probability)
+
+candidate_indices = np.where(recall_values[:-1]>=0.70)[0]
+
+if len(candidate_indices) == 0:
+    raise ValueError("No validation threshold satisfies recall >= 0.70.")
+
+best_index = candidate_indices[np.argmax(precision_values[:-1][candidate_indices])]
+final_threshold = float(thresholds[best_index])
+print(
+    "Selected threshold:",
+    final_threshold
+)
 
 test_probability = model.predict_proba(X_test)[:,1]
 test_prediction = (test_probability >= final_threshold).astype(int)
@@ -132,7 +153,8 @@ metrics = {
     "test_true_negative": int(test_tn),
     "test_false_negative": int(test_fn),
 
-    'test_false_positive_rate': float(test_fpr)
+    'test_false_positive_rate': float(test_fpr),
+    'final_operating_threshold': float(final_threshold)
 
 }
 

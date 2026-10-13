@@ -27,7 +27,7 @@ jobs:
           pip install pytest numpy pandas mlflow xgboost
 
       - name: Validate Python syntax
-        run: python -m compileall azureml tests
+        run: python -m compileall azureml databricks tests
 
       - name: Run unit tests
         run: pytest tests -v
