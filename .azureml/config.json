@@ -1,0 +1,5 @@
+{
+    "subscription_id":"a04797d3-24a7-4263-b445-298c1dc326c5",
+    "resource_group":"rg-fraud-mlops",
+    "workspace_name":"aml-fraud-mlops"
+}
