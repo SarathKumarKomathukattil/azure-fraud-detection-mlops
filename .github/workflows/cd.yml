@@ -1,4 +1,4 @@
-name: Fraud Model CD
+name: Fraud Detection MLOps CD
 
 on:
   workflow_dispatch:

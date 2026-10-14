@@ -1,4 +1,4 @@
-name: Fraud MLOps CI
+name: Fraud Detection MLOps CI
 
 on:
   push:
