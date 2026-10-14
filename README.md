@@ -1,8 +1,8 @@
 # End-to-End Fraud Detection MLOps Platform on Azure
 
-A production-oriented machine learning platform for fraud detection built with **Azure Databricks, ADLS Gen2, Azure Machine Learning, MLflow, Unity Catalog, GitHub Actions, XGBoost, and Azure Monitor**.
+A production-oriented fraud detection platform built with **Azure Databricks, ADLS Gen2, Azure Machine Learning, MLflow, Unity Catalog, GitHub Actions, XGBoost, and Azure Monitor**.
 
-This project goes beyond training a model. It implements the operational controls required to move machine learning from experimentation toward production: governed data pipelines, reproducible retraining, model quality gates, drift and performance monitoring, Continuous Training, CI/CD, blue/green deployment, rollback, observability, and workload-identity security.
+The platform implements the complete operational ML lifecycle: governed data engineering, reproducible retraining, model quality gates, registry-driven promotion, feature-drift and delayed-label performance monitoring, Continuous Training, CI/CD, blue/green deployment, rollback, operational alerting, and workload-identity security.
 
 > **CI proves the code. CT creates a qualified model. CD safely moves that model into production.**
 
@@ -17,136 +17,241 @@ This project goes beyond training a model. It implements the operational control
 | Experiment tracking | MLflow |
 | Automated tests | **24** |
 | Release governance | Recall / PR-AUC / ROC-AUC quality gate |
-| Drift detection | PSI across **12 features** |
-| Continuous Training | Databricks workflow |
+| Drift monitoring | PSI across **12 features** |
+| Continuous Training | Databricks Workflows |
 | CI/CD | GitHub Actions |
 | Serving | Azure ML Managed Online Endpoint |
-| Deployment | Blue/green with **90/10 → 100%** promotion |
+| Deployment strategy | Blue/green with **90/10 → 100%** promotion |
 | Rollback | Previous champion retained |
 | Observed P95 latency | **≈ 12 ms** |
-| Security | OIDC + service principal + RBAC + Unity Catalog |
+| Authentication | GitHub OIDC / workload identity federation |
+| Runtime identity | Non-human service principal |
 | Operational alerts | Request failures + P95 latency |
-
 
 ---
 
-# Architecture
+## Architecture
 
 ```mermaid
 flowchart TB
 
-    PAY[PaySim Historical Transactions]
+    %% =========================================================
+    %% 1. DATA PLATFORM
+    %% =========================================================
 
-    subgraph DATA["Data Platform — ADLS + Azure Databricks"]
-        ADLS[ADLS Gen2]
-        BRONZE[Bronze Delta]
-        SILVER[Silver Delta]
-        GOLD[Gold / Training Features]
+    subgraph DATA["1 — Data Platform"]
+        PAYSIM["PaySim Historical Transactions"]
+        ADLS["ADLS Gen2"]
+        BRONZE["Bronze Delta"]
+        SILVER["Silver Delta"]
+        GOLD["Gold / Model Features"]
 
-        PAY --> ADLS
+        PAYSIM --> ADLS
         ADLS --> BRONZE
         BRONZE --> SILVER
         SILVER --> GOLD
     end
 
-    subgraph PROD["Production Scoring & Monitoring — Databricks"]
-        SCORE[Production Scoring]
-        PRED[Production Predictions]
-        LABELS[Delayed Ground Truth]
-        DRIFT[Feature Drift Monitoring<br/>PSI]
-        PERF[Model Performance Monitoring]
-        CT[Continuous Training Decision]
 
-        SCORE --> PRED
-        PRED --> PERF
-        LABELS --> PERF
-        GOLD --> DRIFT
-        DRIFT --> CT
-        PERF --> CT
-    end
+    %% =========================================================
+    %% 2. MODEL TRAINING & QUALIFICATION
+    %% =========================================================
 
-    subgraph RETRAIN["Retraining Data Pipeline — Databricks + ADLS"]
-        SNAP[Versioned Retraining Snapshot]
-        VOL[Unity Catalog External Volume]
-        DATAASSET[Versioned Azure ML Data Asset]
-
-        CT -->|retraining required| SNAP
-        SNAP --> VOL
-        VOL --> DATAASSET
-    end
-
-    subgraph AML["Azure Machine Learning"]
-        TRAIN[XGBoost Training]
-        MLFLOW[MLflow Tracking]
-        EVAL[Held-Out Test Evaluation]
-        GATE[Model Quality Gate]
-        REG[Azure ML Model Registry<br/>release_status = challenger]
+    subgraph AML["2 — Azure Machine Learning"]
+        DATAASSET["Versioned Azure ML Data Asset"]
+        TRAIN["XGBoost Training"]
+        MLFLOW["MLflow Experiment Tracking"]
+        EVAL["Held-Out Test Evaluation"]
+        GATE{"Model Quality Gate"}
+        REG["Azure ML Model Registry<br/>release_status = challenger"]
 
         DATAASSET --> TRAIN
         TRAIN --> MLFLOW
         TRAIN --> EVAL
         EVAL --> GATE
-        GATE -->|PASS| REG
+        GATE -->|"PASS"| REG
     end
 
-    subgraph GITHUB["GitHub Actions"]
-        CI[CI<br/>compile + pytest]
-        CD[CT / CD Orchestrator]
+    GOLD --> DATAASSET
 
-        CD -->|GitHub OIDC| CT
-        REG --> CD
+
+    %% =========================================================
+    %% 3. PRODUCTION MODEL MONITORING
+    %% =========================================================
+
+    subgraph MON["3 — Databricks Model Monitoring"]
+        SCORE["Production Scoring"]
+        PRED["production_predictions"]
+        LABELS["Delayed Ground Truth"]
+        DRIFT["Feature Drift Monitoring<br/>PSI"]
+        PERF["Performance Monitoring<br/>Precision / Recall / F1 / PR-AUC / ROC-AUC"]
+        CT{"Continuous Training Decision"}
+
+        SCORE --> PRED
+        PRED --> PERF
+        LABELS --> PERF
+
+        GOLD --> DRIFT
+
+        DRIFT --> CT
+        PERF --> CT
     end
 
-    subgraph RELEASE["Safe Production Release — Azure ML"]
-        SLOT[Deploy Challenger to Inactive Slot]
-        SMOKE[Direct Candidate Smoke Test]
-        CANARY[90 / 10 Traffic Rollout]
-        PROMOTE[100% Promotion]
-        ROLLBACK[Rollback Previous Champion]
-        ENDPOINT[fraud-identify-endpoint<br/>Managed Online Endpoint]
 
-        CD --> SLOT
-        SLOT --> SMOKE
+    %% =========================================================
+    %% 4. REPRODUCIBLE RETRAINING
+    %% =========================================================
+
+    subgraph RETRAIN["4 — Reproducible Retraining"]
+        SNAP["Versioned Retraining Snapshot"]
+        VOLUME["Unity Catalog External Volume"]
+        SNAPADLS["ADLS Training Snapshot"]
+        NEWDATA["Versioned Azure ML Data Asset"]
+
+        SNAP --> VOLUME
+        VOLUME --> SNAPADLS
+        SNAPADLS --> NEWDATA
+    end
+
+    CT -->|"retraining required"| SNAP
+    NEWDATA --> TRAIN
+
+
+    %% =========================================================
+    %% 5. SOURCE CONTROL + CI/CD CONTROL PLANE
+    %% =========================================================
+
+    subgraph GITHUB["5 — GitHub & GitHub Actions"]
+        REPO["GitHub Repository"]
+        CI["CI Workflow<br/>compileall + pytest"]
+        CD["CT / CD Workflow"]
+        RELEASE["azureml/release_model.py"]
+
+        REPO --> CI
+        REPO --> CD
+        CD --> RELEASE
+    end
+
+
+    %% GitHub triggers Databricks CT
+    CD -->|"OIDC-authenticated job trigger"| CT
+
+    %% Registry is the CT → CD release boundary
+    REG -->|"approved challenger"| RELEASE
+
+
+    %% =========================================================
+    %% 6. SAFE PRODUCTION RELEASE
+    %% =========================================================
+
+    subgraph SERVING["6 — Safe Online Serving"]
+        CANDIDATE["Deploy Challenger<br/>to Inactive Slot"]
+        SMOKE["Direct Candidate<br/>Smoke Test"]
+        CANARY["90 / 10<br/>Canary Traffic"]
+        PROMOTE["100% Promotion"]
+        ROLLBACK["Rollback to<br/>Previous Champion"]
+
+        ENDPOINT["fraud-identify-endpoint<br/>Azure ML Managed Online Endpoint"]
+        BLUE["Blue Deployment"]
+        GREEN["Green Deployment"]
+
+        CANDIDATE --> SMOKE
         SMOKE --> CANARY
-        CANARY -->|success| PROMOTE
-        CANARY -->|failure| ROLLBACK
+        CANARY -->|"success"| PROMOTE
+        CANARY -->|"failure"| ROLLBACK
+
         PROMOTE --> ENDPOINT
         ROLLBACK --> ENDPOINT
+
+        ENDPOINT --- BLUE
+        ENDPOINT --- GREEN
     end
+
+    RELEASE --> CANDIDATE
 
     ENDPOINT --> SCORE
 
-    subgraph OPS["Operations"]
-        AZMON[Azure Monitor]
-        ALERT1[4xx / 5xx Request Alert]
-        ALERT2[P95 Latency Alert]
-        DBALERT[Databricks Job Failure Alert]
 
-        ENDPOINT --> AZMON
-        AZMON --> ALERT1
-        AZMON --> ALERT2
-        CT --> DBALERT
+    %% =========================================================
+    %% 7. OPERATIONAL MONITORING
+    %% =========================================================
+
+    subgraph OPS["7 — Operational Monitoring & Alerting"]
+        AZMON["Azure Monitor"]
+        ERRALERT["4xx / 5xx<br/>Request Alert"]
+        LATALERT["P95 Latency Alert"]
+        DBALERT["Databricks CT<br/>Failure Notification"]
+        GHALERT["GitHub CD<br/>Failure Notification"]
+
+        AZMON --> ERRALERT
+        AZMON --> LATALERT
     end
 
-    subgraph SECURITY["Security Boundary"]
-        OIDC[GitHub OIDC Federation]
-        SP[github-fraud-mlops-cd<br/>Service Principal]
-        RBAC[Azure RBAC]
-        UC[Unity Catalog ACLs]
-        CRED[fraud_aml_managed_identity<br/>Service Credential]
+    ENDPOINT --> AZMON
+    CT --> DBALERT
+    CD --> GHALERT
 
-        OIDC --> SP
-        SP --> RBAC
-        SP --> UC
-        UC --> CRED
+
+    %% =========================================================
+    %% 8. IDENTITY & SECURITY
+    %% =========================================================
+
+    subgraph SECURITY["8 — Identity & Security"]
+
+        GHOIDC["GitHub Actions<br/>OIDC Token"]
+
+        ENTRA["Microsoft Entra ID<br/>Federated Identity"]
+        AZSP["github-fraud-mlops-cd<br/>Service Principal"]
+        RBAC["Azure RBAC"]
+
+        DBFED["Databricks Workload<br/>Identity Federation"]
+        DBSP["github-fraud-mlops-cd<br/>Databricks Service Principal"]
+
+        UC["Unity Catalog ACLs"]
+        SERVICECRED["fraud_aml_managed_identity<br/>Service Credential"]
+
+        GHOIDC --> ENTRA
+        ENTRA --> AZSP
+        AZSP --> RBAC
+
+        GHOIDC --> DBFED
+        DBFED --> DBSP
+
+        DBSP --> UC
+        UC --> SERVICECRED
     end
+
+
+    %% =========================================================
+    %% SECURITY / CONTROL CONNECTIONS
+    %% =========================================================
+
+    CD -. "GitHub → Azure authentication" .-> GHOIDC
+
+    RBAC -. "Azure ML authorization" .-> RELEASE
+    RBAC -. "workspace / endpoint access" .-> ENDPOINT
+
+    DBSP -. "Run As identity" .-> CT
+
+    SERVICECRED -. "managed identity access to Azure ML" .-> TRAIN
+
 ```
+The architecture deliberately separates **data engineering, model qualification, model monitoring, retraining, registry governance, and production release** so that training completion does not directly imply production deployment.
+
+For a deeper breakdown of trust boundaries, release controls, monitoring, and failure handling, see [`docs/architecture.md`](docs/architecture.md).
+
+
+### End-to-End Automation — Verified
+
+![Successful end-to-end CT/CD workflow](docs/images/01-end-to-end-ct-cd.png)
+
+> **End-to-end CT/CD validation:** GitHub Actions authenticates to Databricks, executes the production CT workflow, authenticates to Azure, and runs the production release controller for an approved challenger.
 
 ---
 
 ## Why This Project Exists
 
-Most machine learning portfolio projects stop at:
+Many machine learning projects end after:
 
 ```text
 train model
@@ -154,58 +259,42 @@ train model
 → save model
 ```
 
-This repository focuses on the harder engineering problem:
+This project focuses on the engineering problem that begins **after a model has been developed**:
 
-```text
-How do we operate a machine-learning system safely after the first model has been trained?
-```
+> **How do we qualify, deploy, monitor, retrain and safely replace a machine-learning model in production?**
 
-The system therefore separates:
+The platform therefore treats model development and model operations as separate concerns.
 
-```text
-Data engineering
-       ↓
-Model development
-       ↓
-Model qualification
-       ↓
-Model registration
-       ↓
-Production release
-       ↓
-Monitoring
-       ↓
-Continuous training
-       ↓
-Safe model replacement
-```
----
+A trained model must pass explicit quality gates, enter a governed registry lifecycle, survive deployment validation, and remain observable after release.
 
 The goal is not merely to produce predictions.
 
-The goal is to build a **traceable, testable, monitored and recoverable ML lifecycle**.
+The goal is to operate a **traceable, testable, monitored and recoverable ML lifecycle**.
 
-# Platform Responsibilities
+---
 
-The architecture deliberately separates responsibilities instead of creating one large notebook or pipeline.
+## Platform Responsibilities
+
+The architecture assigns clear ownership to each platform instead of concentrating the lifecycle inside one notebook or service.
 
 | Platform | Responsibility |
 |---|---|
-| **ADLS Gen2** | Persistent raw and retraining data storage |
+| **ADLS Gen2** | Durable raw data and retraining-snapshot storage |
 | **Azure Databricks** | Bronze/Silver/Gold processing, production scoring, drift monitoring, performance monitoring and CT orchestration |
+| **Delta Lake** | Versioned analytical tables across the data lifecycle |
 | **Unity Catalog** | Data governance, volume permissions and service-credential access |
-| **Azure Machine Learning** | Training, evaluation, quality gate, model registry and online serving |
+| **Azure Machine Learning** | Training, evaluation, quality gates, model registry and managed online serving |
 | **MLflow** | Experiment tracking, parameters, metrics and model artifacts |
 | **GitHub** | Source control and pull-request workflow |
 | **GitHub Actions** | CI and production CT/CD orchestration |
-| **Azure Monitor** | Online endpoint operational monitoring and alerts |
-| **Microsoft Entra ID** | Federated identities and service-principal authentication |
+| **Azure Monitor** | Endpoint operational monitoring and alerting |
+| **Microsoft Entra ID** | Federated identity and Azure authorization |
 
 ---
 
 # Data Engineering
 
-Historical PaySim transactions are processed using a medallion architecture:
+Historical PaySim transaction data is processed through a Databricks medallion architecture:
 
 ```text
 ADLS
@@ -219,27 +308,26 @@ Gold
 
 ### Bronze
 
-Raw transaction ingestion.
+Preserves the ingested transaction data as the raw analytical foundation.
 
 ### Silver
 
-Cleaning, normalization and transformation.
+Applies cleaning, normalization and transformation required by downstream ML workflows.
 
 ### Gold
 
-Model-ready features used for training, monitoring and retraining.
-
-This separation keeps raw data, transformed data and model-consumable datasets independently governed and traceable.
+Produces model-ready features consumed by training, drift monitoring, performance monitoring and retraining workflows.
+The separation ensures that raw data, transformed data and model-consumable data remain independently traceable and governed.
 
 ---
 
-# Machine Learning
+## Model Development & Operating Threshold
 
-The production model is based on **XGBoost**.
+The classifier uses **XGBoost** for fraud detection.
 
-Fraud detection is highly imbalanced, therefore simple accuracy is not used as the primary release criterion.
+Because fraud is a highly imbalanced classification problem, plain accuracy is not used as the primary model-selection criterion.
 
-The workflow evaluates metrics that are more meaningful for rare-event classification:
+Model evaluation focuses on:
 
 - Precision
 - Recall
@@ -248,32 +336,27 @@ The workflow evaluates metrics that are more meaningful for rare-event classific
 - ROC-AUC
 - False Positive Rate
 
----
+### Threshold Selection
 
-# Operating Threshold Policy
-
-The classification threshold is **not selected using the test set**.
-
-The release methodology is:
+The production classification threshold is selected using **validation data only**.
 
 ```text
-Train
-   ↓
-Validation probabilities
-   ↓
-Find thresholds satisfying recall >= 0.70
-   ↓
-Among valid thresholds,
-maximize precision
-   ↓
+Generate validation probabilities
+            ↓
+Evaluate candidate thresholds
+            ↓
+Retain thresholds with Recall >= 0.70
+            ↓
+Maximize Precision among eligible thresholds
+            ↓
 LOCK threshold
-   ↓
+            ↓
 Evaluate once on held-out test data
 ```
 
-This avoids tuning the production operating point against test data.
+This prevents the held-out test set from influencing threshold selection.
 
-The threshold-selection policy is stored with model lifecycle metadata:
+The threshold-selection policy is persisted with model metadata:
 
 ```text
 threshold_policy = recall_70_max_precision
@@ -281,37 +364,34 @@ threshold_policy = recall_70_max_precision
 
 ---
 
-# Model Quality Gate
+## Model Quality Gate
 
-Training success does not automatically make a model deployable.
+Training success does **not** make a model production-eligible.
 
-A candidate must satisfy all release criteria.
+Every candidate must satisfy explicit release criteria before it can enter the deployment lifecycle.
 
-```text
-Recall      >= 0.70
+| Metric | Release Rule | Effective Minimum |
+|---|---|---:|
+| Recall | `Recall >= 0.70` | **0.700000** |
+| PR-AUC | `Test PR-AUC >= 90% of reference validation PR-AUC` | **0.240627** |
+| ROC-AUC | `Test ROC-AUC >= reference validation ROC-AUC - 0.03` | **0.891279** |
 
-Test PR-AUC >= 90% of reference validation PR-AUC
+A representative approved challenger achieved:
 
-Test ROC-AUC >= reference validation ROC-AUC - 0.03
-```
+| Metric | Candidate | Required |
+|---|---:|---:|
+| Recall | **0.706869** | >= 0.700000 |
+| PR-AUC | **0.333139** | >= 0.240627 |
+| ROC-AUC | **0.916218** | >= 0.891279 |
+| Operating threshold | **0.430271** | selected on validation |
 
-For this project the effective release thresholds are approximately:
+Only models that **PASS** all release criteria are registered as deployment challengers.
 
-```text
-Recall      >= 0.700
-PR-AUC      >= 0.241
-ROC-AUC     >= 0.891
-```
+### Model Qualification Evidence
 
-A representative qualified release produced approximately:
+![Azure ML model quality gate](docs/images/02-model-quality-gate.png)
 
-```text
-PR-AUC      0.333
-ROC-AUC     0.916
-Recall      0.707
-```
-
-Only models that pass the gate are registered as deployment challengers.
+> Model candidates must satisfy the configured Recall, PR-AUC and ROC-AUC release criteria before becoming deployment eligible.
 
 ---
 
@@ -469,64 +549,47 @@ The trigger decision and reason are persisted for traceability.
 
 ---
 
-# Reproducible Retraining
+## Reproducible Retraining
 
-A retraining cycle does not directly train against mutable production tables.
+Retraining does not execute directly against mutable production tables.
 
-Instead:
+Instead, each eligible CT cycle materializes a versioned training dataset:
 
 ```text
 Historical training data
-        +
+          +
 Matured production observations
-        ↓
+          ↓
 Versioned retraining snapshot
-        ↓
+          ↓
 Unity Catalog external volume
-        ↓
-ADLS
-        ↓
+          ↓
+ADLS Gen2
+          ↓
 Versioned Azure ML Data Asset
 ```
 
-Each retraining run produces a unique snapshot identifier.
+Each snapshot receives a unique identifier.
 
-That identifier is carried into model metadata so a model can be traced back to the data used to create it.
-
----
-
-# CI — Continuous Integration
-
-CI is responsible for validating **code**, not promoting models.
-
-GitHub Actions runs:
+That identifier is propagated into model lifecycle metadata as:
 
 ```text
-checkout repository
-        ↓
-setup Python
-        ↓
-install dependencies
-        ↓
-python -m compileall
-        ↓
-pytest
+data_version
 ```
 
-The repository currently contains **24 automated tests**.
-
-Core MLOps logic has been moved from notebook-only implementation into reusable Python modules so it can be tested by CI.
-
-Examples include:
+This creates traceability across:
 
 ```text
-fraud_mlops/ct_logic.py
-fraud_mlops/drift_logic.py
-fraud_mlops/split_logic.py
-fraud_mlops/azureml_retraining.py
+production model
+      ↓
+registered model version
+      ↓
+Azure ML training run
+      ↓
+retraining snapshot
+      ↓
+source data
 ```
-
-This prevents critical release logic from existing only inside interactive notebooks.
 
 ---
 
@@ -563,127 +626,111 @@ The workflow runs using a dedicated service principal rather than a personal use
 
 ---
 
-# CD — Continuous Delivery
+## Continuous Delivery & Safe Model Release
 
-CD is responsible for safely releasing an **already qualified** model.
+Continuous Delivery releases an **already qualified** Azure ML model rather than training a new model during deployment.
 
-The production release controller is:
+The release controller is:
 
 ```text
 azureml/release_model.py
 ```
 
-The workflow:
+### Challenger Selection
+
+CD searches the registry for the newest model satisfying:
 
 ```text
-Find latest approved challenger
-        ↓
-Read current endpoint traffic
-        ↓
-Determine active production slot
-        ↓
-Determine inactive candidate slot
-        ↓
-Deploy challenger to inactive slot
-        ↓
-Wait for provisioning success
-        ↓
-Direct smoke test
-        ↓
-90 / 10 traffic allocation
-        ↓
-Candidate smoke test
-        ↓
-100% promotion
+quality_gate = passed
+release_status = challenger
 ```
 
-If release validation fails after traffic shifting begins:
+If no eligible challenger exists, production is left unchanged.
 
-```text
-100% traffic
-        ↓
-previous production deployment
-```
-
-is restored.
-
----
-
-# Blue / Green Deployment
+### Blue/Green Release
 
 The managed endpoint maintains two deployment slots:
 
 ```text
 blue
-
 green
 ```
 
-Only one slot owns production traffic at a time.
+At any point, one slot owns production traffic and the other acts as the candidate/rollback slot.
 
-Example:
+Example release:
 
 ```text
-Before release
+Initial state
 
 blue  = 100%
 green =   0%
-```
 
-A new challenger is deployed to the inactive slot:
+        ↓
 
-```text
+Deploy challenger to green
+
 blue  = 100%
-green = candidate
-```
+green = candidate / 0%
 
-After validation:
+        ↓
 
-```text
+Direct candidate smoke test
+
+        ↓
+
+Canary
+
 blue  = 90%
 green = 10%
-```
 
-After successful rollout:
+        ↓
 
-```text
-blue  = 0%
+Promotion
+
+blue  =   0%
 green = 100%
 ```
 
-On the next release the roles reverse.
+On the next release, the roles reverse.
 
-The previous production deployment is retained as the immediate rollback target.
+Azure Machine Learning documents this staged blue/green pattern as a safe rollout strategy: create an inactive deployment, test it independently, send a small percentage of live traffic, then shift all traffic after validation. :chatgpt-content-reference{index="20"}
 
----
+### Release Safeguards
 
-# Deployment Safety
-
-The release controller includes several safeguards:
+Before full promotion the release controller requires:
 
 ```text
-approved challenger required
+approved challenger
         ↓
-endpoint must be in clean 100/0 state
+clean 100/0 endpoint state
         ↓
-candidate provisioning must succeed
+candidate deployment succeeds
         ↓
-candidate must answer smoke request
+direct candidate smoke test succeeds
         ↓
-limited traffic rollout
+90/10 live traffic allocation
         ↓
-second candidate validation
+candidate validation succeeds
         ↓
-full promotion
+100% promotion
 ```
 
-GitHub Actions also uses a production concurrency group so overlapping production releases cannot execute simultaneously.
+If validation fails after traffic shifting begins, traffic is restored to the previous production deployment.
 
-The current canary implementation validates candidate availability around the traffic shift. Operational endpoint health is monitored separately through Azure Monitor.
+GitHub Actions also uses a production concurrency group to prevent overlapping release executions.
+
+> The current canary validates deployability and scoring availability. Statistical health monitoring is handled separately through production monitoring rather than being overclaimed as part of the canary.
+
+### Blue/Green Deployment — Verified
+
+![Azure ML blue-green endpoint](docs/images/04-blue-green-deployment.png)
+
+> The managed endpoint keeps an active production slot and an inactive candidate/rollback slot so new model versions can be introduced without replacing the serving deployment in place.
 
 ---
 
-# Online Serving
+## Online Serving & Observed Endpoint Performance
 
 Models are served through:
 
@@ -702,210 +749,19 @@ Inference returns:
 }
 ```
 
-The production operating threshold is applied by the scoring implementation rather than relying on a default `0.5` classification threshold.
+The locked operating threshold is applied by the scoring implementation rather than relying on the default classification threshold of `0.5`.
 
----
+### Observed Serving Benchmark
 
-# Measured System Results
+Deployment configuration during the observation window:
 
-The values below are measurements from the implemented platform rather than theoretical targets.
+| Property | Value |
+|---|---|
+| Endpoint | `fraud-identify-endpoint` |
+| Deployment type | Azure ML Managed Online Endpoint |
+| Compute | `Standard_DS2_v2` |
 
-## Model Release Criteria
-
-Model promotion is controlled by explicit quality gates derived from the original validation baseline.
-
-| Metric | Reference Validation | Release Rule | Effective Minimum |
-|---|---:|---:|---:|
-| Recall | — | `>= 0.70` | **0.7000** |
-| PR-AUC | 0.267363 | `>= 90% of validation PR-AUC` | **0.240627** |
-| ROC-AUC | 0.921279 | `>= validation ROC-AUC - 0.03` | **0.891279** |
-
-### Gate calculations
-
-```text
-Minimum PR-AUC
-= 0.2673629652 × 0.90
-= 0.2406266687
-
-Minimum ROC-AUC
-= 0.9212790418 - 0.03
-= 0.8912790418
-
-Minimum Recall
-= 0.70
-```
-
-A representative approved challenger achieved:
-
-| Metric | Result | Gate |
-|---|---:|---:|
-| Recall | **0.706869** | >= 0.700000 |
-| PR-AUC | **0.333139** | >= 0.240627 |
-| ROC-AUC | **0.916218** | >= 0.891279 |
-| Operating threshold | **0.430271** | selected on validation |
-
-The classification threshold is selected using validation data only:
-
-```text
-candidate thresholds
-        ↓
-retain thresholds where recall >= 0.70
-        ↓
-select threshold with highest precision
-        ↓
-lock threshold
-        ↓
-evaluate once on held-out test data
-```
-
-This prevents threshold tuning against the test set.
-
----
-
-## Reference Held-Out Test Evaluation
-
-One evaluated production candidate produced the following confusion matrix:
-
-| | Predicted Fraud | Predicted Normal |
-|---|---:|---:|
-| **Actual Fraud** | TP = 879 | FN = 365 |
-| **Actual Normal** | FP = 8,081 | TN = 80,133 |
-
-### Derived metrics
-
-```text
-Precision
-= TP / (TP + FP)
-
-= 879 / (879 + 8081)
-
-= 0.098103
-```
-
-```text
-Recall
-= TP / (TP + FN)
-
-= 879 / (879 + 365)
-
-= 0.706592
-```
-
-```text
-F1
-= 2 × Precision × Recall
-  / (Precision + Recall)
-
-= 0.172285
-```
-
-```text
-False Positive Rate
-= FP / (FP + TN)
-
-= 8081 / (8081 + 80133)
-
-= 0.091607
-```
-
-Full held-out metrics:
-
-| Metric | Value |
-|---|---:|
-| PR-AUC | **0.347941** |
-| ROC-AUC | **0.918942** |
-| Precision | **0.098103** |
-| Recall | **0.706592** |
-| F1 | **0.172285** |
-| False Positive Rate | **0.091607** |
-
-The relatively low precision is expected for a deliberately recall-constrained fraud operating point on a highly imbalanced dataset; the threshold policy prioritizes detecting at least 70% of fraud events while maximizing precision subject to that recall constraint.
-
----
-
-## Drift Monitoring Configuration
-
-Feature drift is measured using Population Stability Index (PSI).
-
-```text
-PSI
-= Σ (current_i - reference_i)
-    × ln(current_i / reference_i)
-```
-
-Monitoring configuration:
-
-| Parameter | Value |
-|---|---:|
-| Historical reference rows | **6,082,007** |
-| Current drift window | **10,000 rows** |
-| Monitored features | **12** |
-| CT drift trigger | **PSI >= 0.20** |
-
-Interpretation used for reporting:
-
-```text
-PSI < 0.10
-→ LOW
-
-0.10 <= PSI < 0.25
-→ MODERATE
-
-PSI >= 0.25
-→ HIGH
-```
-
-The operational CT trigger is deliberately more sensitive:
-
-```text
-PSI >= 0.20
-→ retraining condition
-```
-
----
-
-## Continuous Training Conditions
-
-Retraining is initiated when at least one monitored condition is breached:
-
-```text
-PSI >= 0.20
-
-OR
-
-Recall < 0.70
-
-OR
-
-PR-AUC < 0.240627
-
-OR
-
-ROC-AUC < 0.891279
-```
-
-This decision is persisted with the trigger reason before retraining begins.
-
----
-
-# Managed Online Endpoint — Observed Serving Benchmark
-
-Azure Monitor was used to inspect the managed online endpoint during validation.
-
-Deployment configuration at measurement time:
-
-```text
-Endpoint:
-fraud-identify-endpoint
-
-Compute SKU:
-Standard_DS2_v2
-
-Deployment type:
-Azure ML Managed Online Endpoint
-```
-
-Observed metrics:
+Observed Azure Monitor metrics:
 
 | Metric | Observed Value |
 |---|---:|
@@ -916,49 +772,41 @@ Observed metrics:
 | Memory utilization | **≈ 4.3%** |
 | Disk utilization | **≈ 29%** |
 
-### Derived resource headroom
+The observed window showed low resource pressure and a relatively compact latency distribution.
 
-```text
-CPU headroom
-= 100% - 0.3%
-= 99.7%
-```
+> **These values are observations from the validation workload, not a production SLA or formal load-test result.** Capacity planning should be based on representative production traffic, concurrency and availability requirements.
 
-```text
-Memory headroom
-= 100% - 4.3%
-= 95.7%
-```
+For additional benchmark detail, see [`docs/serving-benchmark.md`](docs/serving-benchmark.md).
 
-```text
-Available disk percentage
-= 100% - 29%
-= 71%
-```
+---
 
-### Tail-latency spread
+## Measured Model Results
 
-```text
-P95 - P50
-= 12 ms - 8 ms
-= 4 ms
-```
+### Held-Out Test Evaluation
 
-```text
-P99 - P95
-= 14 ms - 12 ms
-= 2 ms
-```
+A validated candidate produced the following held-out evaluation:
 
-```text
-P99 / P50
-= 14 / 8
-≈ 1.75×
-```
+| Metric | Value |
+|---|---:|
+| PR-AUC | **0.347941** |
+| ROC-AUC | **0.918942** |
+| Precision | **0.098103** |
+| Recall | **0.706592** |
+| F1 | **0.172285** |
+| False Positive Rate | **0.091607** |
 
-These measurements demonstrate low resource pressure and a compact tail-latency spread during the observed validation workload.
+Confusion matrix:
 
-> These values represent an observed test window, not a guaranteed production SLA. Production sizing should be based on representative traffic volume, concurrency, availability requirements and load testing.
+| | Predicted Fraud | Predicted Normal |
+|---|---:|---:|
+| **Actual Fraud** | **879** | **365** |
+| **Actual Normal** | **8,081** | **80,133** |
+
+The operating point deliberately constrains recall to approximately 70% and then maximizes precision subject to that recall requirement.
+
+In an imbalanced fraud problem, this makes the business trade-off explicit rather than optimizing for misleading overall accuracy.
+
+For full metric derivations and evaluation methodology, see [`docs/model-evaluation.md`](docs/model-evaluation.md).
 
 ---
 
