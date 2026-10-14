@@ -50,7 +50,7 @@ jobs:
       - name: Release approved challenger
         run: python azureml/release_model.py
 
-        
+
 
 
 
