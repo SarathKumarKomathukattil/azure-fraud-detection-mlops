@@ -2,71 +2,31 @@
 
 A production-oriented machine learning platform for fraud detection built with **Azure Databricks, ADLS Gen2, Azure Machine Learning, MLflow, Unity Catalog, GitHub Actions, XGBoost, and Azure Monitor**.
 
-This project goes beyond training a model. It implements the operational controls required to move machine learning from experimentation toward production:
-
-- governed Bronze / Silver / Gold data pipelines
-- reproducible and versioned retraining datasets
-- MLflow experiment tracking
-- imbalance-aware model evaluation
-- validation/test separation
-- explicit model quality gates
-- model registry lifecycle management
-- feature drift monitoring
-- delayed-label performance monitoring
-- continuous-training orchestration
-- automated CI / CT / CD
-- blue/green deployment
-- canary traffic rollout
-- automatic rollback
-- endpoint health monitoring
-- alerting
-- workload identity federation
-- service-principal execution
-- least-privilege access
+This project goes beyond training a model. It implements the operational controls required to move machine learning from experimentation toward production: governed data pipelines, reproducible retraining, model quality gates, drift and performance monitoring, Continuous Training, CI/CD, blue/green deployment, rollback, observability, and workload-identity security.
 
 > **CI proves the code. CT creates a qualified model. CD safely moves that model into production.**
 
 ---
 
-## Why This Project Exists
+## Production Engineering Highlights
 
-Most machine learning portfolio projects stop at:
+| Capability | Implementation |
+|---|---|
+| Data platform | ADLS Gen2 + Databricks Delta |
+| Model | XGBoost fraud classifier |
+| Experiment tracking | MLflow |
+| Automated tests | **24** |
+| Release governance | Recall / PR-AUC / ROC-AUC quality gate |
+| Drift detection | PSI across **12 features** |
+| Continuous Training | Databricks workflow |
+| CI/CD | GitHub Actions |
+| Serving | Azure ML Managed Online Endpoint |
+| Deployment | Blue/green with **90/10 → 100%** promotion |
+| Rollback | Previous champion retained |
+| Observed P95 latency | **≈ 12 ms** |
+| Security | OIDC + service principal + RBAC + Unity Catalog |
+| Operational alerts | Request failures + P95 latency |
 
-```text
-train model
-→ evaluate model
-→ save model
-```
-
-This repository focuses on the harder engineering problem:
-
-```text
-How do we operate a machine-learning system safely after the first model has been trained?
-```
-
-The system therefore separates:
-
-```text
-Data engineering
-       ↓
-Model development
-       ↓
-Model qualification
-       ↓
-Model registration
-       ↓
-Production release
-       ↓
-Monitoring
-       ↓
-Continuous training
-       ↓
-Safe model replacement
-```
-
-The goal is not merely to produce predictions.
-
-The goal is to build a **traceable, testable, monitored and recoverable ML lifecycle**.
 
 ---
 
@@ -183,6 +143,47 @@ flowchart TB
 ```
 
 ---
+
+## Why This Project Exists
+
+Most machine learning portfolio projects stop at:
+
+```text
+train model
+→ evaluate model
+→ save model
+```
+
+This repository focuses on the harder engineering problem:
+
+```text
+How do we operate a machine-learning system safely after the first model has been trained?
+```
+
+The system therefore separates:
+
+```text
+Data engineering
+       ↓
+Model development
+       ↓
+Model qualification
+       ↓
+Model registration
+       ↓
+Production release
+       ↓
+Monitoring
+       ↓
+Continuous training
+       ↓
+Safe model replacement
+```
+---
+
+The goal is not merely to produce predictions.
+
+The goal is to build a **traceable, testable, monitored and recoverable ML lifecycle**.
 
 # Platform Responsibilities
 
