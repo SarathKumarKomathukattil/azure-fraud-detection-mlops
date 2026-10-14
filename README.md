@@ -251,7 +251,9 @@ For a deeper breakdown of trust boundaries, release controls, monitoring, and fa
 ### End-to-End Automation — Verified
 
 
+
 ![Successful end-to-end CT/CD workflow](docs/images/01-end-to-end-ct-cd.png)
+
 
 
 > **End-to-end CT/CD validation:** GitHub Actions authenticates to Databricks, executes the production CT workflow, authenticates to Azure, and runs the production release controller for an approved challenger.
@@ -407,7 +409,9 @@ Only models that **PASS** all release criteria are registered as deployment chal
 ### Model Qualification Evidence
 
 
+
 ![Azure ML model quality gate](docs/images/02-model-quality-gate.png)
+
 
 
 > Model candidates must satisfy the configured Recall, PR-AUC and ROC-AUC release criteria before becoming deployment eligible.
@@ -611,7 +615,9 @@ The workflow executes using a **non-human service principal** rather than a pers
 ### Continuous Training Workflow — Verified
 
 
+
 ![Databricks continuous training workflow](docs/images/03-databricks-ct-workflow.png)
+
 
 
 > Drift and delayed-label performance monitoring converge on an explicit retraining decision before a versioned training snapshot is exported and submitted to Azure Machine Learning.
@@ -798,7 +804,9 @@ GitHub Actions also uses a production concurrency group to prevent overlapping r
 ### Blue/Green Deployment — Verified
 
 
+
 ![Azure ML blue-green endpoint](docs/images/04-blue-green-deployment.png)
+
 
 
 > The managed endpoint keeps an active production slot and an inactive candidate/rollback slot so new model versions can be introduced without replacing the serving deployment in place.
@@ -970,6 +978,7 @@ Is the model still statistically effective?
 ### Operational Alerts — Verified
 
 
+
 ![Azure Monitor endpoint alerts](docs/images/05-azure-monitor-alerts.png)
 
 
@@ -1053,7 +1062,9 @@ fraud_aml_managed_identity
 ### Production Runtime Identity — Verified
 
 
+
 ![Databricks service-principal runtime](docs/images/06-service-principal-runtime.png)
+
 
 
 > The production CT workflow executes using a non-human service principal rather than a personal Databricks identity.
