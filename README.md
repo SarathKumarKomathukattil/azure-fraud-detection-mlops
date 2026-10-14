@@ -23,7 +23,7 @@ The platform implements the complete operational ML lifecycle: governed data eng
 | Serving | Azure ML Managed Online Endpoint |
 | Deployment strategy | Blue/green with **90/10 → 100%** promotion |
 | Rollback | Previous champion retained |
-| Observed P95 latency | **≈ 12 ms** |
+| Observed P95 latency | **≈ 12 ms (validation workload)** |
 | Authentication | GitHub OIDC / workload identity federation |
 | Runtime identity | Non-human service principal |
 | Operational alerts | Request failures + P95 latency |
@@ -80,6 +80,7 @@ flowchart TB
     %% =========================================================
 
     subgraph MON["3 — Databricks Model Monitoring"]
+        DBJOB["fraud-mlops-ct-workflow"]
         SCORE["Production Scoring"]
         PRED["production_predictions"]
         LABELS["Delayed Ground Truth"]
@@ -92,6 +93,9 @@ flowchart TB
         LABELS --> PERF
 
         GOLD --> DRIFT
+
+        DBJOB --> DRIFT
+        DBJOB --> PERF
 
         DRIFT --> CT
         PERF --> CT
@@ -134,7 +138,7 @@ flowchart TB
 
 
     %% GitHub triggers Databricks CT
-    CD -->|"OIDC-authenticated job trigger"| CT
+    CD -->|"OIDC-authenticated run-now"| DBJOB
 
     %% Registry is the CT → CD release boundary
     REG -->|"approved challenger"| RELEASE
@@ -169,7 +173,8 @@ flowchart TB
 
     RELEASE --> CANDIDATE
 
-    ENDPOINT --> SCORE
+    SCORE -->|"invoke"| ENDPOINT
+    ENDPOINT -->|"prediction response"| SCORE
 
 
     %% =========================================================
@@ -188,7 +193,7 @@ flowchart TB
     end
 
     ENDPOINT --> AZMON
-    CT --> DBALERT
+    DBJOB --> DBALERT
     CD --> GHALERT
 
 
@@ -231,7 +236,7 @@ flowchart TB
     RBAC -. "Azure ML authorization" .-> RELEASE
     RBAC -. "workspace / endpoint access" .-> ENDPOINT
 
-    DBSP -. "Run As identity" .-> CT
+    DBSP -. "Run As identity" .-> DBJOB
 
     SERVICECRED -. "managed identity access to Azure ML" .-> TRAIN
 
@@ -292,12 +297,12 @@ The architecture assigns clear ownership to each platform instead of concentrati
 
 ---
 
-# Data Engineering
+## Data Engineering
 
 Historical PaySim transaction data is processed through a Databricks medallion architecture:
 
 ```text
-ADLS
+ADLS Gen2
  ↓
 Bronze
  ↓
@@ -395,15 +400,15 @@ Only models that **PASS** all release criteria are registered as deployment chal
 
 ---
 
-# Model Registry Lifecycle
+## Model Registry Lifecycle
 
-Approved models are registered in Azure Machine Learning under:
+Qualified models are registered in Azure Machine Learning under:
 
 ```text
 fraud-xgboost
 ```
 
-Lifecycle metadata includes:
+Each registered version carries lifecycle metadata:
 
 ```text
 quality_gate
@@ -412,36 +417,50 @@ data_version
 threshold_policy
 ```
 
-For example:
+Typical lifecycle:
 
 ```text
-quality_gate    = passed
-release_status  = challenger
-data_version    = <snapshot identifier>
+challenger
+    ↓
+champion
+    ↓
+rollback
+```
+
+Example metadata:
+
+```text
+quality_gate     = passed
+release_status   = challenger
+data_version     = <snapshot identifier>
 threshold_policy = recall_70_max_precision
 ```
 
-This turns the model registry into a formal boundary between:
+The registry acts as the formal **CT → CD contract**:
 
 ```text
-model creation
+Continuous Training
+        ↓
+qualified challenger
+        ↓
+Azure ML Model Registry
+        ↓
+Continuous Delivery
+        ↓
+production
 ```
 
-and:
-
-```text
-production release
-```
+A successful training run therefore cannot directly replace the production model.
 
 ---
 
-# Production Model Monitoring
+## Model Monitoring
 
-The project distinguishes several different production signals.
+Model quality monitoring is kept separate from serving-infrastructure monitoring.
 
-## 1. Feature Drift
+### Feature Drift
 
-Feature distributions are compared against historical reference data using **Population Stability Index (PSI)**.
+Feature distributions are compared with a historical reference using **Population Stability Index (PSI)**.
 
 Drift metrics are persisted in:
 
@@ -449,53 +468,67 @@ Drift metrics are persisted in:
 fraud_mlops.gold.feature_drift_metrics
 ```
 
-The CT trigger currently considers feature drift actionable at:
+| Monitoring Parameter | Value |
+|---|---:|
+| Historical reference rows | **6,082,007** |
+| Current monitoring window | **10,000 rows** |
+| Monitored features | **12** |
+| CT drift trigger | **PSI >= 0.20** |
+
+Reporting interpretation:
+
+```text
+PSI < 0.10
+→ LOW
+
+0.10 <= PSI < 0.25
+→ MODERATE
+
+PSI >= 0.25
+→ HIGH
+```
+
+The production CT policy intentionally uses the more sensitive trigger:
 
 ```text
 PSI >= 0.20
 ```
 
----
+### Production Predictions
 
-## 2. Production Predictions
-
-Endpoint predictions are stored in:
+Production scoring results are persisted in:
 
 ```text
 fraud_mlops.gold.production_predictions
 ```
 
-This provides an auditable record of production scoring behavior.
+This creates an auditable record of production prediction behavior.
 
----
+### Delayed Ground Truth
 
-## 3. Delayed Ground Truth
+Fraud labels are modeled as delayed rather than instantly available.
 
-Fraud labels are treated as delayed rather than instantly available.
-
-Ground truth is stored in:
+Matured labels are stored in:
 
 ```text
 fraud_mlops.gold.production_ground_truth
 ```
 
-This allows the platform to distinguish:
+This allows the platform to distinguish between:
 
 ```text
-feature drift
+input-distribution change
 ```
 
-from:
+and:
 
 ```text
-actual model-performance degradation
+actual predictive-performance degradation
 ```
 
----
+### Performance Monitoring
 
-## 4. Performance Monitoring
-
-Once labels are available, the monitoring workflow calculates production metrics including:
+Once labels become available, the workflow calculates:
 
 ```text
 Precision
@@ -505,7 +538,7 @@ PR-AUC
 ROC-AUC
 ```
 
-Metrics are persisted in:
+Results are persisted in:
 
 ```text
 fraud_mlops.gold.model_performance_metrics
@@ -513,39 +546,58 @@ fraud_mlops.gold.model_performance_metrics
 
 ---
 
-# Continuous Training
+## Continuous Training (CT)
 
-The CT workflow evaluates both drift and model performance.
+Continuous Training evaluates both **feature-distribution change** and **observed production-model performance**.
 
-Conceptually:
+Retraining becomes eligible when at least one monitored condition is breached:
+
+| Signal | Retraining Condition |
+|---|---:|
+| Feature drift | **PSI >= 0.20** |
+| Recall | **< 0.70** |
+| PR-AUC | **< 0.240627** |
+| ROC-AUC | **< 0.891279** |
+
+The trigger decision and trigger reason are persisted for traceability.
+
+The production Databricks workflow is:
 
 ```text
-Feature Drift ──────────────┐
-                            │
-Production Performance ─────┼──> CT Decision
-                            │
-Quality Thresholds ─────────┘
+fraud-mlops-ct-workflow
 ```
 
-Retraining can be triggered when:
+Workflow:
 
 ```text
-PSI >= 0.20
-
-OR
-
-Recall < 0.70
-
-OR
-
-PR-AUC < 0.241
-
-OR
-
-ROC-AUC < 0.891
+feature_drift_monitoring ─────────┐
+                                  │
+performance_monitoring ───────────┤
+                                  ↓
+                              ct_trigger
+                                  ↓
+                           should_retrain
+                                  ↓
+                    build_retraining_dataset
+                                  ↓
+                    export_retraining_snapshot
+                                  ↓
+                   trigger_azureml_retraining
+                                  ↓
+                    evaluation + quality gate
+                                  ↓
+                       register challenger
 ```
 
-The trigger decision and reason are persisted for traceability.
+A failure in monitoring, dataset preparation, export, training or evaluation prevents downstream model promotion.
+
+The workflow executes using a **non-human service principal** rather than a personal runtime identity.
+
+### Continuous Training Workflow — Verified
+
+![Databricks continuous training workflow](docs/images/03-databricks-ct-workflow.png)
+
+> Drift and delayed-label performance monitoring converge on an explicit retraining decision before a versioned training snapshot is exported and submitted to Azure Machine Learning.
 
 ---
 
@@ -553,7 +605,7 @@ The trigger decision and reason are persisted for traceability.
 
 Retraining does not execute directly against mutable production tables.
 
-Instead, each eligible CT cycle materializes a versioned training dataset:
+Each eligible CT cycle materializes a versioned training dataset:
 
 ```text
 Historical training data
@@ -569,9 +621,7 @@ ADLS Gen2
 Versioned Azure ML Data Asset
 ```
 
-Each snapshot receives a unique identifier.
-
-That identifier is propagated into model lifecycle metadata as:
+Each retraining snapshot receives a unique identifier that is propagated into model metadata as:
 
 ```text
 data_version
@@ -591,38 +641,44 @@ retraining snapshot
 source data
 ```
 
+The model can therefore be traced back to the exact versioned dataset used to create it.
+
 ---
 
-# CT — Continuous Training
+## CI — Continuous Integration
 
-The production Databricks workflow is:
+Continuous Integration validates **code quality and release-critical MLOps logic** independently of model training and model promotion.
 
-```text
-fraud-mlops-ct-workflow
-```
-
-High-level task graph:
+GitHub Actions executes:
 
 ```text
-feature_drift_monitoring ─┐
-                          │
-performance_monitoring ───┼──> ct_trigger
-                          │
-                          ↓
-                    should_retrain
-                          ↓
-               build_retraining_dataset
-                          ↓
-               export_retraining_snapshot
-                          ↓
-              trigger_azureml_retraining
-                          ↓
-               evaluation + quality gate
-                          ↓
-                 register challenger
+checkout repository
+        ↓
+setup Python
+        ↓
+install dependencies
+        ↓
+python -m compileall
+        ↓
+pytest
 ```
 
-The workflow runs using a dedicated service principal rather than a personal user identity.
+Current automated test suite:
+
+```text
+24 tests
+```
+
+Release-critical logic has been extracted from notebooks into reusable Python modules:
+
+```text
+fraud_mlops/ct_logic.py
+fraud_mlops/drift_logic.py
+fraud_mlops/split_logic.py
+fraud_mlops/azureml_retraining.py
+```
+
+This makes MLOps decision logic testable, reviewable and enforceable through CI rather than leaving it embedded only inside interactive notebooks.
 
 ---
 
@@ -694,7 +750,7 @@ green = 100%
 
 On the next release, the roles reverse.
 
-Azure Machine Learning documents this staged blue/green pattern as a safe rollout strategy: create an inactive deployment, test it independently, send a small percentage of live traffic, then shift all traffic after validation. :chatgpt-content-reference{index="20"}
+Azure Machine Learning documents this staged blue/green pattern as a safe rollout strategy: create an inactive deployment, test it independently, send a small percentage of live traffic, then shift all traffic after validation.
 
 ### Release Safeguards
 
@@ -784,7 +840,7 @@ For additional benchmark detail, see [`docs/serving-benchmark.md`](docs/serving-
 
 ### Held-Out Test Evaluation
 
-A validated candidate produced the following held-out evaluation:
+A separate validated reference release produced the following held-out evaluation:
 
 | Metric | Value |
 |---|---:|
@@ -794,6 +850,8 @@ A validated candidate produced the following held-out evaluation:
 | Recall | **0.706592** |
 | F1 | **0.172285** |
 | False Positive Rate | **0.091607** |
+
+These metrics are from a different validated release than the representative challenger shown in the Model Quality Gate section above.
 
 Confusion matrix:
 
@@ -810,7 +868,7 @@ For full metric derivations and evaluation methodology, see [`docs/model-evaluat
 
 ---
 
-## Automated Pipeline Runtime
+## Observed End-to-End Pipeline Runtime
 
 A successful integrated GitHub Actions run demonstrated the complete CT/CD chain:
 
@@ -826,7 +884,7 @@ Registry
 Blue-green release
 ```
 
-Observed execution:
+One observed successful execution:
 
 | Stage | Observed Runtime |
 |---|---:|
@@ -838,62 +896,71 @@ These timings are execution observations rather than pipeline SLAs.
 
 ---
 
-## Operational Alert Thresholds
+## Operational Monitoring & Alerting
 
-| Signal | Threshold / Condition | Platform |
-|---|---|---|
-| Endpoint request failures | **4xx or 5xx > 0** | Azure Monitor |
-| P95 inference latency | **> 2,000 ms** | Azure Monitor |
-| Feature drift | **PSI >= 0.20** | Databricks |
-| Recall degradation | **< 0.70** | Databricks |
-| PR-AUC degradation | **< 0.240627** | Databricks |
-| ROC-AUC degradation | **< 0.891279** | Databricks |
-| CT workflow failure | **Job failure** | Databricks notification |
-| Production CD failure | **Workflow failure** | GitHub Actions |
+The platform deliberately separates **model-quality monitoring** from **serving-infrastructure monitoring**.
 
----
+### Model Health — Databricks
 
-# Operational Monitoring
-
-Model monitoring and infrastructure monitoring are deliberately separated.
-
-## Model Health
-
-Handled in Databricks:
+Databricks monitors:
 
 ```text
 feature drift
-model performance
-CT decision
+delayed-label model performance
+CT trigger state
+workflow health
 ```
 
-## Service Health
+### Service Health — Azure Monitor
 
-Handled through Azure Monitor:
+Azure Monitor monitors:
 
 ```text
 HTTP request failures
 P95 inference latency
-endpoint health
+endpoint operational health
 ```
 
-Two Azure Monitor alert rules protect the managed online endpoint:
+### Alerting Policy
+
+| Signal | Threshold / Condition | Platform | Response |
+|---|---|---|---|
+| Endpoint request failures | `4xx or 5xx > 0` | Azure Monitor | Alert |
+| P95 inference latency | `> 2,000 ms` initial guardrail | Azure Monitor | Alert |
+| Feature drift | `PSI >= 0.20` | Databricks | CT condition |
+| Recall degradation | `< 0.70` | Databricks | CT condition |
+| PR-AUC degradation | `< 0.240627` | Databricks | CT condition |
+| ROC-AUC degradation | `< 0.891279` | Databricks | CT condition |
+| CT workflow failure | Job failure | Databricks | Email notification |
+| CD workflow failure | Workflow failure | GitHub Actions | Workflow notification |
+
+> The current latency threshold is an initial operational guardrail rather than a formal SLO. A production threshold should be calibrated using representative load testing, expected concurrency, and business latency requirements.
+
+This separation answers two different operational questions:
 
 ```text
-4xx / 5xx request failures
-
-P95 latency threshold
+Is the serving endpoint healthy?
 ```
 
-Databricks also sends notification when the CT workflow fails.
+versus:
+
+```text
+Is the model still statistically effective?
+```
+
+### Operational Alerts — Verified
+
+![Azure Monitor endpoint alerts](docs/images/05-azure-monitor-alerts.png)
+
+> Azure Monitor protects the managed endpoint with request-failure and P95-latency alert rules, while Databricks separately monitors model-quality signals.
 
 ---
 
-# Security Architecture
+## Security Architecture
 
 The project avoids long-lived CI/CD cloud credentials.
 
-## GitHub → Azure
+### GitHub → Azure
 
 ```text
 GitHub Actions
@@ -913,7 +980,7 @@ There is no Azure client secret stored in GitHub Actions.
 
 ---
 
-## GitHub → Databricks
+### GitHub → Databricks
 
 ```text
 GitHub Actions
@@ -931,7 +998,7 @@ There is no Databricks PAT stored in GitHub Actions.
 
 ---
 
-## Databricks Runtime Identity
+### Databricks Runtime Identity
 
 The production workflow executes as:
 
@@ -957,17 +1024,22 @@ ACCESS service credential
 CAN MANAGE RUN
 ```
 
-The Azure ML service credential is:
+The Databricks service credential used for Azure ML access is:
 
 ```text
 fraud_aml_managed_identity
 ```
+### Production Runtime Identity — Verified
+
+![Databricks service-principal runtime](docs/images/06-service-principal-runtime.png)
+
+> The production CT workflow executes using a non-human service principal rather than a personal Databricks identity.
 
 ---
 
-# Failure Boundaries
+## Failure Boundaries
 
-A production ML system should fail safely.
+A production ML system must fail safely and preserve the last known-good production state whenever possible.
 
 | Failure | Behavior |
 |---|---|
@@ -988,7 +1060,7 @@ A central design principle is:
 
 ---
 
-# Repository Structure
+## Repository Structure
 
 ```text
 fraud-detection-mlops/
@@ -1030,6 +1102,9 @@ fraud-detection-mlops/
 ├── docs/
 │   ├── images/
 │   ├── architecture.md
+│   ├── model-evaluation.md
+│   ├── monitoring.md
+│   ├── serving-benchmark.md
 │   └── operations-runbook.md
 │
 ├── SECURITY.md
@@ -1039,9 +1114,9 @@ fraud-detection-mlops/
 
 ---
 
-# Engineering Decisions
+## Key Engineering Decisions
 
-## Managed Azure ML Serving
+### Managed Azure ML Serving
 
 The project uses Azure ML Managed Online Endpoints so the engineering focus remains on:
 
@@ -1058,7 +1133,7 @@ rather than introducing infrastructure components that are not required by this 
 
 ---
 
-## Registry as a Release Boundary
+### Registry as a Release Boundary
 
 Continuous training and continuous delivery are intentionally decoupled.
 
@@ -1078,7 +1153,7 @@ This prevents a training pipeline from directly replacing the production model.
 
 ---
 
-## Delayed Labels
+### Delayed Labels
 
 Fraud labels are not assumed to exist immediately when a transaction is scored.
 
@@ -1096,7 +1171,7 @@ true predictive performance
 
 ---
 
-## Shared Python Logic
+### Shared Python Logic
 
 Critical production decisions live in reusable Python modules rather than only in notebooks.
 
@@ -1108,155 +1183,41 @@ maintainability
 reviewability
 CI coverage
 ```
+---
+
+## How to Review This Repository in 5 Minutes
+
+| Area | Location | What It Demonstrates |
+|---|---|---|
+| System overview | `README.md` | End-to-end MLOps lifecycle |
+| Architecture | `docs/architecture.md` | Component, control and trust boundaries |
+| Core MLOps logic | `fraud_mlops/` | Reusable, testable production logic |
+| Monitoring | `databricks/monitoring/` | Drift + delayed-label performance monitoring |
+| Retraining | `databricks/retraining/` | Versioned retraining lifecycle |
+| Azure ML | `azureml/` | Training, scoring and release implementation |
+| Release controller | `azureml/release_model.py` | Blue/green promotion and rollback |
+| CI/CD | `.github/workflows/` | Automated CI and CT/CD |
+| Tests | `tests/` | Automated validation |
+| Security | `SECURITY.md` | Federated identity and least privilege |
 
 ---
 
-## Service Principal Runtime
+## Technology Stack
 
-Production automation executes with an application identity rather than a human account.
-
-This reduces operational dependency on individual users and allows permissions to be scoped specifically to the workflow.
-
----
-
-# Evidence of the System Running
-
-The repository includes visual evidence of the implemented system:
-
-```text
-GitHub CI success
-
-GitHub end-to-end CT/CD success
-
-Databricks CT workflow success
-
-Azure ML quality-gate PASS
-
-Azure ML model registry lifecycle
-
-Blue/green endpoint deployment
-
-Azure Monitor operational alerts
-
-Service-principal execution
-```
-
-See:
-
-```text
-docs/images/
-```
+| Area | Technologies |
+|---|---|
+| Cloud | Microsoft Azure, Azure Machine Learning, Azure Monitor, ADLS Gen2, Microsoft Entra ID |
+| Data Engineering | Azure Databricks, PySpark, Delta Lake, Unity Catalog |
+| Machine Learning | Python, XGBoost, scikit-learn, MLflow |
+| MLOps | Azure ML Model Registry, Managed Online Endpoints, Databricks Workflows, GitHub Actions |
+| Release Engineering | CI/CD, Continuous Training, blue/green deployment, canary rollout, rollback |
+| Monitoring | PSI drift monitoring, delayed-label performance monitoring, Azure Monitor |
+| Security | OIDC federation, workload identity federation, service principals, Azure RBAC, Unity Catalog ACLs, managed identity |
+| Quality | pytest, compile checks, model quality gates, smoke tests |
 
 ---
 
-# How to Review This Repository in 5 Minutes
-
-If you are evaluating this project for an ML Engineering or MLOps role, start with:
-
-```text
-1. README.md
-   → complete system overview
-
-2. docs/architecture.md
-   → architecture and security boundaries
-
-3. fraud_mlops/
-   → reusable production logic
-
-4. databricks/monitoring/
-   → drift + performance + CT
-
-5. databricks/retraining/
-   → versioned retraining data
-
-6. azureml/
-   → training, evaluation and release code
-
-7. azureml/release_model.py
-   → blue/green production deployment
-
-8. .github/workflows/
-   → CI and CT/CD automation
-
-9. tests/
-   → automated validation
-
-10. SECURITY.md
-    → identity and least-privilege model
-```
-
----
-
-# Technologies
-
-### Cloud
-
-```text
-Microsoft Azure
-Azure Machine Learning
-Azure Monitor
-ADLS Gen2
-Microsoft Entra ID
-```
-
-### Data Engineering
-
-```text
-Azure Databricks
-PySpark
-Delta Lake
-Unity Catalog
-```
-
-### Machine Learning
-
-```text
-Python
-XGBoost
-scikit-learn
-MLflow
-```
-
-### MLOps
-
-```text
-Azure ML Model Registry
-Managed Online Endpoints
-Databricks Workflows
-GitHub Actions
-Continuous Training
-CI/CD
-Blue/Green Deployment
-Canary Rollout
-Rollback
-Model Monitoring
-```
-
-### Security
-
-```text
-OIDC Federation
-Workload Identity Federation
-Service Principals
-Azure RBAC
-Unity Catalog ACLs
-Managed Identity
-```
-
-### Quality
-
-```text
-pytest
-compile checks
-quality gates
-smoke tests
-drift thresholds
-performance thresholds
-```
-
----
-
-# Validation
+## Validation
 
 Local code validation:
 
@@ -1273,13 +1234,30 @@ Current automated test suite:
 
 ---
 
-# Project Scope
+## Scope & Extension Points
 
-This repository implements the production MLOps control plane against a finite fraud dataset.
+This repository validates a production-oriented MLOps control plane using a finite PaySim fraud dataset.
 
-The release architecture is designed so that continuously arriving production data can be connected without redesigning the model-release system.
+The implemented lifecycle covers:
 
-For a continuously updated data source, natural extensions include:
+```text
+data engineering
+model training
+experiment tracking
+model qualification
+registry governance
+managed online deployment
+model monitoring
+Continuous Training
+CI/CD
+rollback
+operational alerting
+identity security
+```
+
+The architecture is designed so that continuously arriving production data could be incorporated without redesigning the model-release boundary.
+
+Natural extensions for continuously updated data include:
 
 ```text
 data-arrival-aware retraining
@@ -1289,83 +1267,12 @@ freshness controls
 event-driven CT
 ```
 
-These concerns are intentionally kept separate from the implemented fraud-detection lifecycle.
+The project intentionally uses **Azure Machine Learning Managed Online Endpoints** for serving. Kubernetes-based serving and infrastructure-as-code are separate infrastructure concerns and are outside the implemented scope of this repository.
 
 ---
 
-# Implemented Scope — No Inflated Claims
-
-This repository implements:
-
-```text
-Azure ML Managed Online Endpoints
-Azure Databricks
-MLflow
-ADLS Gen2
-Unity Catalog
-GitHub Actions
-Azure Monitor
-OIDC
-service-principal automation
-```
-
-It does **not** claim implementation of:
-
-```text
-Kubernetes
-AKS
-Terraform
-Bicep
-ACR
-Azure Container Apps
-```
-
-Those technologies are separate infrastructure concerns and are not required to demonstrate the ML lifecycle implemented here.
-
----
-
-# What This Project Demonstrates
-
-This project demonstrates hands-on understanding of the complete machine-learning production lifecycle:
-
-```text
-data engineering
-        ↓
-model training
-        ↓
-experiment tracking
-        ↓
-evaluation
-        ↓
-release governance
-        ↓
-model registry
-        ↓
-online serving
-        ↓
-monitoring
-        ↓
-continuous training
-        ↓
-CI/CD
-        ↓
-safe model promotion
-        ↓
-rollback
-        ↓
-security
-        ↓
-operations
-```
-
-The emphasis is not only on building a model.
-
-It is on **operating machine learning as an engineering system**.
-
----
-
-# Author
+## Author
 
 **Sarath Kumar Komathukattil**
 
-MLOps / Machine Learning Engineering
+Machine Learning Engineering · MLOps · Applied AI
