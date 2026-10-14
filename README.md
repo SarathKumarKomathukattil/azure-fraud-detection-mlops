@@ -2,7 +2,7 @@
 
 A production-oriented fraud detection platform built with **Azure Databricks, ADLS Gen2, Azure Machine Learning, MLflow, Unity Catalog, GitHub Actions, XGBoost, and Azure Monitor**.
 
-The platform processes the **PaySim dataset of 6,362,620 money transactions**, including **8,213 fraudulent transactions (~0.129%)**, through a governed Databricks medallion pipeline and an end-to-end Azure MLOps lifecycle.
+The platform processes **over 6.3 million PaySim mobile-money transactions**, including only **8,213 fraudulent transactions (~0.129%)**, through a governed Databricks medallion architecture and an end-to-end Azure MLOps lifecycle.
 
 It implements reproducible retraining, validation-based threshold selection, model quality gates, registry-driven promotion, feature-drift and delayed-label performance monitoring, Continuous Training, CI/CD, blue/green deployment, rollback, operational alerting, and workload-identity security.
 
@@ -342,9 +342,44 @@ Dataset attribution: E. A. Lopez-Rojas, A. Elmir, and S. Axelsson, *PaySim: A Fi
 
 ## Model Development & Operating Threshold
 
-The classifier uses **XGBoost** for fraud detection.
+### Candidate Model Comparison
 
-Because fraud is a highly imbalanced classification problem, plain accuracy is not used as the primary model-selection criterion.
+Model development evaluated three candidate algorithms before selecting the production model family:
+
+- **Logistic Regression** — interpretable baseline
+- **LightGBM** — gradient-boosting challenger
+- **XGBoost** — gradient-boosting challenger selected for the productionized lifecycle
+
+Because fraud detection is severely imbalanced, model comparison emphasized **PR-AUC, ROC-AUC, precision, recall, F1, false positives, and operating-threshold behavior** rather than overall accuracy.
+
+| Model | Validation PR-AUC | Validation ROC-AUC | Role |
+|---|---:|---:|---|
+| Logistic Regression | **0.081011** | **0.906861** | Baseline |
+| LightGBM | **0.269387** | **0.920936** | Challenger |
+| XGBoost | **0.267363** | **0.921279** | Productionized model |
+
+The boosted-tree models substantially outperformed the Logistic Regression baseline on PR-AUC.
+
+LightGBM and XGBoost were then compared under the production operating requirement:
+
+> **Recall >= 0.70, then maximize Precision**
+
+| Metric | XGBoost | LightGBM |
+|---|---:|---:|
+| Precision | 0.048607 | **0.049770** |
+| Recall | **0.707912** | 0.701178 |
+| F1 | 0.090968 | **0.092943** |
+| False Positives | 16,461 | **15,904** |
+
+The two boosted-tree models were close: LightGBM held a small advantage in PR-AUC, precision, F1 and false-positive count, while XGBoost held a small advantage in ROC-AUC and recall.
+
+For the final productionized implementation, **XGBoost was retained as the production model family** and carried through validation-only threshold selection, held-out evaluation, the Azure ML quality gate, model registry, managed online serving, monitoring, Continuous Training, and blue/green deployment.
+
+The production choice therefore represents an **engineering trade-off between comparable model quality and operational lifecycle maturity**, rather than a claim that XGBoost was superior on every offline metric.
+
+### Threshold Selection
+
+### Threshold Selection
 
 Model evaluation focuses on:
 
