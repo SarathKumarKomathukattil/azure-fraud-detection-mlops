@@ -2,7 +2,9 @@
 
 A production-oriented fraud detection platform built with **Azure Databricks, ADLS Gen2, Azure Machine Learning, MLflow, Unity Catalog, GitHub Actions, XGBoost, and Azure Monitor**.
 
-The platform implements the complete operational ML lifecycle: governed data engineering, reproducible retraining, model quality gates, registry-driven promotion, feature-drift and delayed-label performance monitoring, Continuous Training, CI/CD, blue/green deployment, rollback, operational alerting, and workload-identity security.
+The platform processes the **PaySim dataset of 6,362,620 money transactions**, including **8,213 fraudulent transactions (~0.129%)**, through a governed Databricks medallion pipeline and an end-to-end Azure MLOps lifecycle.
+
+It implements reproducible retraining, validation-based threshold selection, model quality gates, registry-driven promotion, feature-drift and delayed-label performance monitoring, Continuous Training, CI/CD, blue/green deployment, rollback, operational alerting, and workload-identity security.
 
 > **CI proves the code. CT creates a qualified model. CD safely moves that model into production.**
 
