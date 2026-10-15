@@ -3,9 +3,6 @@ name: Fraud Detection MLOps CD
 on:
   workflow_dispatch:
 
-  schedule:
-    - cron: "0 * * * *"
-
 permissions:
   contents: read
   id-token: write
